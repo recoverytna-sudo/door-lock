@@ -40,7 +40,6 @@ module.exports = async (req, res) => {
   }
 
   try {
-    // 🌟 Google API Setup
     let privateKey = process.env.PRIVATE_KEY || '';
     if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
       privateKey = privateKey.slice(1, -1);
@@ -57,19 +56,17 @@ module.exports = async (req, res) => {
     const sheets = google.sheets({ version: 'v4', auth });
     const SHEET_ID = process.env.SHEET_ID_DOORLOCK;
 
-    // 🌟 Cloudshare Auth Setup
     const username = process.env.CLOUDSHARE_USER || '';
     const password = process.env.CLOUDSHARE_PASSWORD || '';
     const authHeader = 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
 
     // =========================================================================
-    // 🌟 GET REQUEST (Dropdown Data & Dashboard)
+    // 🌟 GET REQUEST
     // =========================================================================
     if (req.method === 'GET') {
       const { action, date } = req.query;
 
       if (action === "getOffices") {
-        // Sheet2 မှ Office နှင့် Position ဆွဲယူခြင်း
         const getOfficeRes = await sheets.spreadsheets.values.get({
           spreadsheetId: SHEET_ID,
           range: "'Sheet2'!A2:B"
@@ -82,7 +79,6 @@ module.exports = async (req, res) => {
           if (rows[r][1] && String(rows[r][1]).trim() !== "") positionList.push(String(rows[r][1]).trim());
         }
         
-        // Remove Duplicates just in case
         officeList = [...new Set(officeList)];
         positionList = [...new Set(positionList)];
         
@@ -90,7 +86,6 @@ module.exports = async (req, res) => {
       }
 
       if (date) {
-        // Master Offices (Sheet2)
         const masterRes = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: "'Sheet2'!A2:A" });
         const masterRows = masterRes.data.values || [];
         let masterOffices = [];
@@ -99,7 +94,6 @@ module.exports = async (req, res) => {
         }
         masterOffices = [...new Set(masterOffices)];
 
-        // Uploaded Data (Sheet1)
         const dataRes = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: "'Sheet1'!A2:F" });
         const dataRows = dataRes.data.values || [];
         let result = [];
@@ -113,18 +107,18 @@ module.exports = async (req, res) => {
               id: dataRows[i][2] || "",
               position: dataRows[i][3] || "",
               office: dataRows[i][4] || "",
-              images: dataRows[i][5] ? [dataRows[i][5]] : [] // Cloudshare Link
+              images: dataRows[i][5] ? [dataRows[i][5]] : []
             });
           }
         }
         return jsonResponse(res, 200, { uploaded: result, masterOffices: masterOffices });
       }
       
-      return jsonResponse(res, 200, { status: "active", message: "Door Lock API (Sheet + Cloudshare) is Running!" });
+      return jsonResponse(res, 200, { status: "active", message: "Door Lock API is Running!" });
     }
 
     // =========================================================================
-    // 🌟 POST REQUEST (Upload to Cloudshare & Save to Sheet1)
+    // 🌟 POST REQUEST
     // =========================================================================
     if (req.method === 'POST') {
       let body = req.body;
@@ -134,7 +128,7 @@ module.exports = async (req, res) => {
 
       const { date, name, id, position, office, images } = body;
 
-      // ၁။ Duplicate စစ်ဆေးခြင်း
+      // Duplicate Check
       const getCheckRes = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: "'Sheet1'!A:E" });
       const allRows = getCheckRes.data.values || [];
       const startIndex = Math.max(1, allRows.length - 100);
@@ -150,8 +144,7 @@ module.exports = async (req, res) => {
         }
       }
 
-      // ၂။ Date အလိုက် Cloudshare Folder Name များ ခွဲခြမ်းခြင်း
-      // Input: 2026-10-08
+      // Date Folder Structure
       const dateParts = String(date).split('-');
       const yyyy = dateParts[0]; 
       const mmIndex = parseInt(dateParts[1], 10) - 1; 
@@ -161,13 +154,12 @@ module.exports = async (req, res) => {
       const mmm = months[mmIndex]; 
       const yy = yyyy.slice(2); 
       
-      const folder1 = yyyy; // 2026
-      const folder2 = `${mmm}'${yy}`; // Oct'26
-      const folder3 = `${dd} ${mmm} ${yyyy}`; // 08 Oct 2026
+      const folder1 = yyyy; 
+      const folder2 = `${mmm}'${yy}`; 
+      const folder3 = `${dd} ${mmm} ${yyyy}`; 
 
       const baseWebdavUrl = "https://cloudshare.frontiir.net/remote.php/webdav/SharedOps_Fin/FinOps_MN/Store Door Lock Photo/Lower Door Lock Check/YGN";
       
-      // Folder ဆောက်ခြင်း
       const url1 = `${baseWebdavUrl}/${encodeURIComponent(folder1)}`;
       await createWebdavFolder(url1, authHeader);
       
@@ -177,22 +169,21 @@ module.exports = async (req, res) => {
       const finalFolderUrl = `${url2}/${encodeURIComponent(folder3)}`;
       await createWebdavFolder(finalFolderUrl, authHeader);
 
-      // Sheet တွင် သိမ်းရန် Browser Link တည်ဆောက်ခြင်း
       const uiBaseDir = `/SharedOps_Fin/FinOps_MN/Store Door Lock Photo/Lower Door Lock Check/YGN/${folder1}/${folder2}/${folder3}`;
       const cloudshareLink = `https://cloudshare.frontiir.net/index.php/apps/files/?dir=${encodeURIComponent(uiBaseDir)}`;
 
-      // ၃။ ပုံများကို Upload တင်ခြင်း
+      // 🌟 ပုံများကို OfficeName_Date ပုံစံဖြင့် သိမ်းဆည်းခြင်း (ဥပမာ: HGIN_2026-10-08_1.jpg)
       if (images && images.length > 0) {
         for (let i = 0; i < images.length; i++) {
           let img = images[i];
-          let fileName = `DoorLock_${office}_${date}_${i+1}_${Date.now()}.jpg`;
+          let fileName = `${office}_${date}_${i+1}.jpg`;
           
           let fileWebdavUrl = `${finalFolderUrl}/${encodeURIComponent(fileName)}`;
           await uploadToCloudshare(img.base64, img.type, fileWebdavUrl, authHeader);
         }
       }
 
-      // ၄။ Google Sheet (Sheet1) သို့ စာရင်းသွင်းခြင်း
+      // Google Sheet သို့ စာရင်းသွင်းခြင်း
       const appendValues = [[`'${date}`, name, id, position, office, cloudshareLink]];
       
       await sheets.spreadsheets.values.append({
